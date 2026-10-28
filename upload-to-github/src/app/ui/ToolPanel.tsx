@@ -1,4 +1,5 @@
-import { getEditor, setEditor, useEditor, type Battlement, type SculptMode, type StoneStyle } from '../../state/store';
+import { getEditor, setEditor, useEditor, type Battlement, type SculptMode, type StoneStyle, type WaterKind } from '../../state/store';
+import { WATER_COLORS, WATER_PRESETS } from '../../engine/water/waterData';
 import { assetsForCategory } from '../../engine/objects/catalog';
 import { LAYERS } from '../../engine/terrain/layers';
 import { eng } from '../engine';
@@ -155,6 +156,73 @@ function AssetPanel({ cat }: { cat: NonNullable<ReturnType<typeof getEditor>['ca
   );
 }
 
+const WATER_ICONS: Record<WaterKind, JSX.Element> = {
+  pond: <I.Pond />, lake: <I.Lake />, tank: <I.Tank />, moat: <I.Moat />, river: <I.River />, stream: <I.Stream />, waterfall: <I.Waterfall />,
+};
+
+export const waterSwatchCss = (i: number) => {
+  const c = WATER_COLORS[i];
+  const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
+  return `linear-gradient(135deg, ${hex(c.shallow)} 0%, ${hex(c.deep)} 100%)`;
+};
+
+function WaterPanel() {
+  const w = useEditor((st) => st.water);
+  const tool = useEditor((st) => st.tool);
+  const set = (p: Partial<typeof w>) => setEditor({ water: { ...getEditor().water, ...p } });
+  const pick = (kind: WaterKind) => {
+    const pr = WATER_PRESETS[kind];
+    setEditor({
+      tool: 'water',
+      place: { ...getEditor().place, assetId: null },
+      water: { ...getEditor().water, kind, depth: pr.depth, width: pr.width, shore: pr.shore, flow: pr.flow, color: pr.color },
+    });
+  };
+  const pr = WATER_PRESETS[w.kind];
+  const drawing = tool === 'water';
+  return (
+    <>
+      <div className="mode-grid">
+        {(Object.keys(WATER_PRESETS) as WaterKind[]).map((k) => (
+          <button key={k} className={`mode-btn ${w.kind === k && drawing ? 'on' : ''}`} onClick={() => pick(k)} data-tip={WATER_PRESETS[k].hint}>
+            {WATER_ICONS[k]}
+            <span>{WATER_PRESETS[k].label}</span>
+          </button>
+        ))}
+      </div>
+      {drawing && (
+        <>
+          <p className="panel-hint">
+            {w.drawing
+              ? pr.mode === 'area'
+                ? `${w.points} point${w.points === 1 ? '' : 's'} · click the first point, double-click or Enter to fill it · Backspace removes a point`
+                : `${w.points} point${w.points === 1 ? '' : 's'} · double-click or Enter to finish · click the first point (or C) to close a ring`
+              : pr.hint + (pr.mode === 'area' ? '. Press and drag to sketch freely.' : '. Steep drops turn into falls with mist.')}
+          </p>
+          <Slider label="Depth" value={w.depth} min={0.3} max={8} step={0.1} format={(v) => v.toFixed(1)} onChange={(depth) => set({ depth })} />
+          {pr.mode === 'flow' && <Slider label="Width" value={w.width} min={1} max={24} step={0.2} format={(v) => v.toFixed(1)} onChange={(width) => set({ width })} />}
+          <Slider label="Shore softness" value={w.shore} min={0.3} max={10} step={0.1} format={(v) => v.toFixed(1)} onChange={(shore) => set({ shore })} />
+          {pr.mode === 'flow' && w.kind !== 'moat' && <Slider label="Flow speed" value={w.flow} min={0} max={3} step={0.05} format={(v) => v.toFixed(2)} onChange={(flow) => set({ flow })} />}
+          <div className="field">
+            <span className="field-label">Water colour</span>
+            <div className="variants">
+              {WATER_COLORS.map((c, i) => (
+                <button key={c.name} className={`variant ${w.color === i ? 'on' : ''}`} style={{ background: waterSwatchCss(i) }} onClick={() => set({ color: i })} data-tip={c.name} aria-label={c.name} />
+              ))}
+            </div>
+          </div>
+          <Slider label="Clarity" value={w.clarity} min={0} max={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(clarity) => set({ clarity })} />
+          <Slider label="Reflection" value={w.reflect} min={0} max={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(reflect) => set({ reflect })} />
+          <Toggle label="Dig the bed into the ground" value={w.carve} onChange={(carve) => set({ carve })} hint="Carves a basin or channel so the water sits naturally" />
+        </>
+      )}
+      <div className="panel-gap" />
+      <div className="field-label">Wells &amp; fountains</div>
+      <AssetPanel cat="water" />
+    </>
+  );
+}
+
 export function ToolPanel() {
   const category = useEditor((s) => s.category);
   const terrainTab = useEditor((s) => s.terrainTab);
@@ -179,15 +247,7 @@ export function ToolPanel() {
         </>
       )}
       {category === 'walls' && <WallPanel />}
-      {category === 'water' && (
-        <div className="soon soon-big">
-          <I.Water size={28} />
-          <div>
-            <strong>Water is on its way</strong>
-            <span>Ponds drawn as shapes, rivers and moats as curves, and little waterfalls with mist — coming in Phase 3. For now, dig a moat with Terrain → Lower and paint it Wet Earth.</span>
-          </div>
-        </div>
-      )}
+      {category === 'water' && <WaterPanel />}
       {!['terrain', 'walls', 'water'].includes(category) && <AssetPanel cat={category} />}
     </aside>
   );

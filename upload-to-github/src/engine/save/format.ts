@@ -2,9 +2,11 @@ import type { PlotSizeId, TimePreset } from '../../state/store';
 import type { ObjectData } from '../objects/ObjectSystem';
 import type { WallData } from '../walls/wallGeometry';
 import type { CameraState } from '../CameraRig';
+import type { WaterData } from '../water/waterData';
 
 export const FORMAT = 'majha-killa';
-export const VERSION = 1;
+/** v2 adds optional `water`. v1 files load unchanged. */
+export const VERSION = 2;
 const MAGIC = [0x4b, 0x49, 0x4c, 0x41]; // 'KILA'
 
 export interface KillaMeta {
@@ -23,6 +25,7 @@ export interface KillaHeader {
   meta: KillaMeta;
   terrain: { res: number; size: number; hMin: number; hMax: number; splatRes: number; sections: Record<string, [number, number]> };
   walls: WallData[];
+  water?: WaterData[];
   objects: ObjectData[];
   env: { time: TimePreset };
   camera?: CameraState;

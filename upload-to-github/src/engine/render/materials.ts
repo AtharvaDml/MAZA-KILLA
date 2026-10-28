@@ -6,7 +6,7 @@ import { LAMP_COUNT, shared } from './shared';
 import { createMasonryTextures, createRangoliTexture } from './textures';
 
 export type MaterialKey =
-  | 'clay' | 'stone' | 'cloth' | 'flame' | 'glow' | 'window' | 'lantern' | 'metal' | 'rangoli_lotus' | 'rangoli_star';
+  | 'clay' | 'stone' | 'cloth' | 'flame' | 'glow' | 'window' | 'lantern' | 'metal' | 'rangoli_lotus' | 'rangoli_star' | 'water_small';
 
 interface HandmadeOpts {
   key: string;
@@ -166,6 +166,8 @@ function patchHandmade(mat: MeshStandardMaterial, o: HandmadeOpts) {
 
 export interface MaterialSet {
   get(key: MaterialKey): Material;
+  /** Late-bound materials that need other systems first (e.g. water reads the terrain + sky). */
+  register(key: MaterialKey, m: Material): void;
   wall: { normal: MeshStandardMaterial; hover: MeshStandardMaterial; selected: MeshStandardMaterial };
   ghost: { valid: MeshBasicMaterial; invalid: MeshBasicMaterial; warn: MeshBasicMaterial };
   overlay: MeshBasicMaterial;
@@ -293,7 +295,7 @@ export function createMaterials(): MaterialSet {
   const rangoliLotus = rangoli('lotus');
   const rangoliStar = rangoli('star');
 
-  const table: Record<MaterialKey, Material> = {
+  const table: Partial<Record<MaterialKey, Material>> = {
     clay, stone, cloth, flame, glow, metal,
     window: windowMat,
     lantern,
@@ -304,7 +306,8 @@ export function createMaterials(): MaterialSet {
   const ghostMat = (c: number) =>
     new MeshBasicMaterial({ color: c, transparent: true, opacity: 0.42, depthWrite: false });
   return {
-    get: (k) => table[k],
+    get: (k) => table[k] ?? clay,
+    register: (k, m) => { table[k] = m; },
     wall,
     ghost: { valid: ghostMat(0x7be36a), invalid: ghostMat(0xff4a3a), warn: ghostMat(0xffc04a) },
     overlay: new MeshBasicMaterial({ color: 0xffe2b0, transparent: true, opacity: 0.85, depthTest: false, depthWrite: false }),

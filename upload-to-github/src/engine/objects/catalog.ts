@@ -509,6 +509,42 @@ function akashKandil(): AssetPart[] {
   ];
 }
 
+// ─────────────────────────────── WATER PROPS ───────────────────────────────
+
+function well(): AssetPart[] {
+  const b = new PartBuilder(true);
+  const stoneUv = (p: Vector3, uv: { x: number }) => [uv.x * 2, p.y / STONE_TILE] as [number, number];
+  b.add(lathe([[1.15, -0.6], [1.15, 0.95], [1.12, 1.05], [0.8, 1.05], [0.8, -0.4]], 28), { color: 0xffffff, tint: 1, uvFn: stoneUv, ao: [0, 0.8, 0.6] });
+  const wood = new PartBuilder();
+  for (const x of [-1.0, 1.0]) wood.add(cyl(0.07, 0.09, 2.3, 8, 2), { color: 0x5b3e28, pos: [x, 1.9, 0], smooth: true, colorNoise: 0.15 });
+  wood.add(cyl(0.05, 0.05, 2.2, 8), { color: 0x5b3e28, pos: [0, 2.95, 0], rot: [0, 0, Math.PI / 2] });
+  wood.add(new TorusGeometry(0.22, 0.05, 6, 16), { color: 0x4a3423, pos: [0, 2.95, 0], rot: [0, Math.PI / 2, 0] });
+  wood.add(cyl(0.012, 0.012, 1.4, 4), { color: 0x9a8a6a, pos: [0.22, 2.25, 0] });
+  wood.add(lathe([[0, 0], [0.16, 0], [0.19, 0.24], [0.17, 0.26], [0.14, 0.03], [0, 0.03]], 12), { color: 0x7a6a5a, pos: [0.22, 1.42, 0], smooth: true });
+  const water = new PartBuilder();
+  water.add(new CircleGeometry(0.8, 28), { color: 0xffffff, rot: [-Math.PI / 2, 0, 0], pos: [0, 0.55, 0] });
+  return [
+    { geometry: b.build(), material: 'stone', shadow: true },
+    { geometry: wood.build(), material: 'clay', shadow: true },
+    { geometry: water.build(), material: 'water_small', noPick: true },
+  ];
+}
+
+function fountain(): AssetPart[] {
+  const b = new PartBuilder(true);
+  const stoneUv = (p: Vector3, uv: { x: number }) => [uv.x * 3, p.y / STONE_TILE] as [number, number];
+  // Lotus-edged basin with a carved central pedestal and bowl.
+  b.add(lathe([[2.3, -0.3], [2.3, 0.55], [2.15, 0.62], [1.95, 0.6], [1.95, 0.1], [0.4, 0.1]], 8), { color: 0xffffff, tint: 1, uvFn: stoneUv, ao: [0, 0.5, 0.65] });
+  b.add(lathe([[0.32, 0.1], [0.26, 1.2], [0.3, 1.3], [0.9, 1.45], [0.95, 1.6], [0.8, 1.62], [0.25, 1.5], [0.1, 1.9], [0.14, 2.05], [0, 2.1]], 16), { color: 0xffffff, tint: 1, uvFn: stoneUv, smooth: true });
+  const water = new PartBuilder();
+  water.add(new CircleGeometry(1.95, 32), { color: 0xffffff, rot: [-Math.PI / 2, 0, 0], pos: [0, 0.48, 0] });
+  water.add(new CircleGeometry(0.8, 20), { color: 0xffffff, rot: [-Math.PI / 2, 0, 0], pos: [0, 1.56, 0] });
+  return [
+    { geometry: b.build(), material: 'stone', shadow: true },
+    { geometry: water.build(), material: 'water_small', noPick: true },
+  ];
+}
+
 function rangoliPart(key: 'rangoli_lotus' | 'rangoli_star'): AssetPart[] {
   const b = new PartBuilder(true);
   b.add(new CircleGeometry(1.4, 48), { color: 0xffffff, rot: [-Math.PI / 2, 0, 0], pos: [0, 0.035, 0] });
@@ -595,6 +631,11 @@ export function buildCatalog(): AssetDef[] {
     { id: 'rangoli_lotus', name: 'Rangoli · Lotus', category: 'diwali', parts: rangoliPart('rangoli_lotus'), radius: 1.4, height: 0.05, scale: [0.4, 4], align: true, sound: 'soft',
       info: 'Rangoli is drawn with coloured powder at thresholds and courtyards to welcome guests and festivity.' },
     { id: 'rangoli_star', name: 'Rangoli · Star', category: 'diwali', parts: rangoliPart('rangoli_star'), radius: 1.4, height: 0.05, scale: [0.4, 4], align: true, sound: 'soft' },
+
+    // WATER props (water bodies themselves are drawn with the Water tool)
+    { id: 'well', name: 'Well (Vihir)', category: 'water', parts: well(), radius: 1.3, height: 3.1, scale: [0.6, 1.8], variants: STONE_VARIANTS, sound: 'stone',
+      info: 'Wells (vihir) and stepwells (barav) kept forts and villages supplied with water through the dry months.' },
+    { id: 'fountain', name: 'Fountain (Karanje)', category: 'water', parts: fountain(), radius: 2.4, height: 2.1, scale: [0.6, 2.5], variants: STONE_VARIANTS, sound: 'stone' },
   ];
   cache = defs;
   return defs;

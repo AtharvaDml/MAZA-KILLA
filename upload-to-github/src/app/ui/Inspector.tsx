@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { setEditor, useEditor, type Battlement, type InspectorObject, type InspectorWall, type StoneStyle, type TransformMode } from '../../state/store';
+import { setEditor, useEditor, type Battlement, type InspectorObject, type InspectorWall, type InspectorWater, type StoneStyle, type TransformMode } from '../../state/store';
+import { WATER_COLORS, WATER_PRESETS } from '../../engine/water/waterData';
+import { waterSwatchCss } from './ToolPanel';
 import { eng } from '../engine';
 import { Segmented, Slider, Toggle } from './controls';
 import { I } from './icons';
@@ -104,12 +106,66 @@ function WallInspector({ s }: { s: InspectorWall }) {
   );
 }
 
+function WaterInspector({ s }: { s: InspectorWater }) {
+  const showInfo = useEditor((st) => st.showInfo);
+  const set = (p: Parameters<ReturnType<typeof eng>['applyWaterInspector']>[0]) => eng().applyWaterInspector(p);
+  const pr = WATER_PRESETS[s.waterKind];
+  const flow = s.mode === 'flow';
+  // Pin the level slider's range when this water is selected so it doesn't drift while dragging.
+  const [base] = useState(s.level);
+  return (
+    <>
+      <div className="panel-head">
+        <h2>{pr.label}</h2>
+        {flow && <span className="badge badge-soft">{Math.round(s.length)} m</span>}
+        <button className="panel-close" onClick={() => eng().setSelection([])} aria-label="Deselect"><I.Close size={16} /></button>
+      </div>
+      {showInfo && s.waterKind === 'moat' && (
+        <div className="note"><I.Info size={16} /><span>Ground forts were often ringed by a moat (khandak), so attackers had to cross water under the walls.</span></div>
+      )}
+      {showInfo && s.waterKind === 'tank' && (
+        <div className="note"><I.Info size={16} /><span>Hill forts stored monsoon rain in rock-cut tanks so the garrison had water all year.</span></div>
+      )}
+      <p className="panel-hint">Drag the round handles to reshape it. Double-click the water to add a point; click a handle and press Delete to remove it.{s.falls ? ` ${s.falls} fall${s.falls > 1 ? 's' : ''} where the ground drops.` : ''}</p>
+      {!flow && (
+        <>
+          <Slider label="Water level" value={s.level} min={base - 6} max={base + 6} step={0.05} format={(v) => v.toFixed(2)} onChange={(level) => set({ level })} />
+          {!s.levelAuto && <button className="act" onClick={() => set({ level: null })}>Reset level to the shoreline</button>}
+        </>
+      )}
+      {flow && <Slider label="Width" value={s.width} min={1} max={24} step={0.2} format={(v) => v.toFixed(1)} onChange={(width) => set({ width })} />}
+      {flow && s.waterKind !== 'moat' && <Slider label="Flow speed" value={s.flow} min={0} max={3} step={0.05} format={(v) => v.toFixed(2)} onChange={(f) => set({ flow: f })} />}
+      <div className="field">
+        <span className="field-label">Water colour</span>
+        <div className="variants">
+          {WATER_COLORS.map((c, i) => (
+            <button key={c.name} className={`variant ${s.color === i ? 'on' : ''}`} style={{ background: waterSwatchCss(i) }} onClick={() => set({ color: i })} data-tip={c.name} aria-label={c.name} />
+          ))}
+        </div>
+      </div>
+      <Slider label="Clarity" value={s.clarity} min={0} max={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(clarity) => set({ clarity })} />
+      <Slider label="Reflection" value={s.reflect} min={0} max={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(reflect) => set({ reflect })} />
+      {flow && s.points >= 3 && <Toggle label="Closed ring" value={s.closed} onChange={(closed) => set({ closed })} />}
+      {flow && (
+        <button className="act" style={{ width: '100%', marginTop: 8 }} onClick={() => eng().addWaterCrossing()} data-tip="Leaves a land bridge where the camera is looking">
+          <I.Walls size={16} /> Add a dry crossing{s.crossings ? ` (${s.crossings})` : ''}
+        </button>
+      )}
+      <div className="actions">
+        <button className="act" onClick={() => eng().duplicateSelection()}><I.Copy size={16} /> Duplicate</button>
+        <button className="act" onClick={() => eng().focusSelection()}><I.Focus size={16} /> Focus</button>
+        <button className="act act-danger" onClick={() => eng().deleteSelection()}><I.Trash size={16} /> Delete</button>
+      </div>
+    </>
+  );
+}
+
 export function Inspector() {
   const insp = useEditor((s) => s.inspector);
   if (!insp) return null;
   return (
     <aside className="inspector panel" aria-label="Selection">
-      {insp.kind === 'object' ? <ObjectInspector s={insp} /> : <WallInspector s={insp} />}
+      {insp.kind === 'object' ? <ObjectInspector s={insp} /> : insp.kind === 'wall' ? <WallInspector s={insp} /> : <WaterInspector key={insp.id} s={insp} />}
     </aside>
   );
 }

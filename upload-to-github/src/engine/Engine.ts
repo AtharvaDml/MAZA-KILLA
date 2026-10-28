@@ -3,7 +3,7 @@ import {
 } from 'three';
 import {
   editorStore, getEditor, setEditor, toast, watch,
-  type CameraPreset, type InspectorObject, type InspectorWall, type KillaListing, type PlotSizeId, type Quality,
+  type CameraPreset, type InspectorObject, type InspectorWall, type InspectorWater, type KillaListing, type PlotSizeId, type Quality,
   type SelRef, type TimePreset, type ToolId, type CategoryId,
 } from '../state/store';
 import { CameraRig } from './CameraRig';
@@ -28,6 +28,10 @@ import { SculptTool } from './tools/SculptTool';
 import { SelectTool } from './tools/SelectTool';
 import type { PointerInfo, Tool } from './tools/Tool';
 import { WallTool } from './tools/WallTool';
+import { WaterTool } from './tools/WaterTool';
+import { WaterSystem } from './water/WaterSystem';
+import { createWaterMaterial } from './water/WaterMaterial';
+import { cloneWater, type WaterData } from './water/waterData';
 import { uid } from './util/id';
 import { DEG, clamp } from './util/math';
 import { WallSystem, cloneWall, type WallData } from './walls/WallSystem';
@@ -56,6 +60,7 @@ export class Engine {
   terrain!: Terrain;
   objects!: ObjectSystem;
   walls!: WallSystem;
+  water!: WaterSystem;
   env!: Environment;
   lighting!: Lighting;
   overlay!: Overlay;
@@ -117,6 +122,9 @@ export class Engine {
     this.scene.add(this.objects.group);
     this.walls = new WallSystem(this.materials, (x, z) => this.terrain.heightAt(x, z));
     this.scene.add(this.walls.group);
+    this.water = new WaterSystem(this.terrain, this.env.skyUniforms);
+    this.scene.add(this.water.group);
+    this.materials.register('water_small', createWaterMaterial(this.water.env, { shallow: 0x6fb7c4, deep: 0x1d4f6b, clarity: 0.4, reflect: 0.9, fixedDepth: 0.9 }));
     this.overlay = new Overlay(this.materials);
     this.scene.add(this.overlay.group);
     this.rig.heightAt = (x, z) => this.terrain.heightAt(x, z);
@@ -128,6 +136,7 @@ export class Engine {
       paint: new PaintTool(this),
       place: new PlaceTool(this),
       wall: new WallTool(this),
+      water: new WaterTool(this),
     };
     this.tool = this.tools.select;
     this.input = new InputRouter(this, this.renderer.domElement);
@@ -189,6 +198,7 @@ export class Engine {
     this.renderer.domElement.style.width = '100%';
     this.renderer.domElement.style.height = '100%';
     this.rig.resize(w / h);
+    this.water?.setViewportHeight(h * this.renderer.getPixelRatio());
     this.post?.setSize(w, h);
   }
 
@@ -343,7 +353,7 @@ export class Engine {
     let tool: ToolId = 'select';
     if (cat === 'terrain') tool = s.terrainTab === 'paint' ? 'paint' : 'sculpt';
     else if (cat === 'walls') tool = 'wall';
-    else if (cat === 'water') tool = 'select';
+    else if (cat === 'water') tool = s.place.assetId && categoryOf(s.place.assetId, 'water') ? 'place' : 'water';
     else tool = s.place.assetId && getAsset(s.place.assetId) && categoryOf(s.place.assetId, cat) ? 'place' : 'select';
     setEditor({ category: cat, tool });
   }
@@ -424,7 +434,20 @@ export class Engine {
     const w = this.walls.pick(ray);
     if (o && (!w || o.distance <= w.distance + 0.05)) return { kind: 'object', id: o.id, point: o.point, distance: o.distance };
     if (w) return { kind: 'wall', id: w.id, point: w.point, distance: w.distance };
+    const wa = this.water.pick(ray);
+    if (wa) return { kind: 'water', id: wa.id, point: wa.point, distance: wa.distance };
     return null;
+  }
+
+  /** Does the thing a selection points at still exist? */
+  hasRef(r: SelRef) {
+    return r.kind === 'object' ? this.objects.has(r.id) : r.kind === 'wall' ? this.walls.has(r.id) : this.water.has(r.id);
+  }
+
+  private highlightRef(r: SelRef, level: 'none' | 'hover' | 'selected') {
+    if (r.kind === 'object') this.objects.setHighlight(r.id, level === 'selected' ? 1 : level === 'hover' ? 0.45 : 0);
+    else if (r.kind === 'wall') this.walls.setHighlight(r.id, level);
+    else this.water.setHighlight(r.id, level === 'selected' ? 1 : level === 'hover' ? 0.5 : 0);
   }
 
   // ───────────────────────────── commands ─────────────────────────────
@@ -554,6 +577,109 @@ export class Engine {
     return cmd;
   }
 
+  cmdAddWater(data: WaterData, label = 'Add water'): Command {
+    const d = cloneWater(data);
+    return {
+      label, bytes: 512 + d.points.length * 16,
+      redo: () => this.water.add(d),
+      undo: () => { this.water.remove(d.id); this.pruneSelection(); },
+    };
+  }
+
+  cmdRemoveWater(data: WaterData, label = 'Remove water'): Command {
+    const d = cloneWater(data);
+    return {
+      label, bytes: 512 + d.points.length * 16,
+      redo: () => { this.water.remove(d.id); this.pruneSelection(); },
+      undo: () => this.water.add(d),
+    };
+  }
+
+  cmdUpdateWater(before: WaterData, after: WaterData, label: string, coalesceKey?: string): Command {
+    const cmd = {
+      label, coalesceKey, bytes: 1024,
+      before: cloneWater(before), after: cloneWater(after),
+      redo() { /* set below */ }, undo() { /* set below */ },
+      merge(next: Command) {
+        const n = next as typeof cmd;
+        if (!n.after || n.after.id !== this.after.id) return false;
+        this.after = n.after;
+        return true;
+      },
+    };
+    cmd.redo = () => { this.water.update(cmd.after); this.refreshInspector(); this.refreshSelectionVisuals(); };
+    cmd.undo = () => { this.water.update(cmd.before); this.refreshInspector(); this.refreshSelectionVisuals(); };
+    return cmd;
+  }
+
+  /**
+   * Create a water body, optionally digging its bed into the terrain, as ONE undo step.
+   * A water tank also gets a low stone kerb along its edge.
+   */
+  createWater(data: WaterData, carve: boolean): string | null {
+    const cmds: Command[] = [];
+    if (carve) {
+      const plan = this.water.carvePlan(data);
+      if (plan) {
+        const old = this.terrain.heights.slice();
+        const rect = this.terrain.carve(plan.bounds[0], plan.bounds[1], plan.bounds[2], plan.bounds[3], plan.target);
+        if (rect) {
+          this.followTerrain(rect, old);
+          cmds.push(this.cmdHeights(rect, this.terrain.extractRect(old, rect), this.terrain.extractRect(this.terrain.heights, rect), 'Dig water bed'));
+        }
+      }
+    }
+    const add = this.cmdAddWater(data, `Add ${data.kind}`);
+    add.redo();
+    cmds.push(add);
+    if (data.kind === 'tank') {
+      const kerb: WallData = {
+        id: uid(), points: data.points.map(([x, z]) => [x, z]), closed: true, smooth: true, height: 1.1, thickness: 1.1,
+        battlement: 'none', stone: 'basalt', flip: false, openings: [],
+      };
+      const wc = this.cmdAddWall(kerb, 'Tank kerb');
+      wc.redo();
+      cmds.push(wc);
+    }
+    const labels: Record<string, string> = { pond: 'Pond', lake: 'Lake', tank: 'Water tank', moat: 'Moat', river: 'River', stream: 'Stream', waterfall: 'Waterfall' };
+    this.history.push(new CompositeCommand(`Add ${labels[data.kind] ?? 'water'}`, cmds));
+    const falls = this.water.fallsOf(data.id);
+    toast(falls ? `${labels[data.kind]} added — ${falls} fall${falls > 1 ? 's' : ''} where the ground drops` : `${labels[data.kind]} added`, 'ok', 2400);
+    return data.id;
+  }
+
+  applyWaterInspector(patch: Partial<Pick<WaterData, 'level' | 'width' | 'shore' | 'flow' | 'color' | 'clarity' | 'reflect' | 'closed'>>) {
+    const sel = getEditor().selection;
+    if (sel.length !== 1 || sel[0].kind !== 'water') return;
+    const before = this.water.get(sel[0].id);
+    if (!before) return;
+    const after = { ...cloneWater(before), ...patch };
+    this.exec(this.cmdUpdateWater(before, after, 'Edit water', 'water:' + Object.keys(patch).join(',')));
+  }
+
+  /** Leave a dry crossing (land bridge) in a moat or river at the point nearest the camera's focus. */
+  addWaterCrossing() {
+    const sel = getEditor().selection;
+    if (sel.length !== 1 || sel[0].kind !== 'water') return;
+    const before = this.water.get(sel[0].id);
+    if (!before || before.mode !== 'flow') return;
+    const t = this.water.arcLengthNear(before.id, this.rig.target.x, this.rig.target.z);
+    const after = cloneWater(before);
+    after.openings.push({ t, width: Math.max(4, before.width * 0.8) });
+    this.exec(this.cmdUpdateWater(before, after, 'Add crossing'));
+    toast('Crossing added where the camera is looking', 'ok', 1800);
+  }
+
+  deleteWaterPoint(id: string, index: number) {
+    const w = this.water.get(id);
+    if (!w) return;
+    const min = w.mode === 'area' ? 3 : 2;
+    if (w.points.length <= min) { toast('This water needs more points than that', 'warn'); return; }
+    const after = cloneWater(w);
+    after.points.splice(index, 1);
+    this.exec(this.cmdUpdateWater(w, after, 'Remove water point'));
+  }
+
   /** Terrain edit command: before/after heights for a rect; followers re-conform both ways. */
   cmdHeights(rect: GridRect, before: Float32Array, after: Float32Array, label: string): Command {
     return {
@@ -590,6 +716,7 @@ export class Engine {
     const attached: { o: ObjectData; surf?: number }[] = [];
     for (const id of wallIds) for (const o of this.objects.attachedTo('w:' + id)) attached.push({ o, surf: this.walls.surfaceAt(o.p[0], o.p[2])?.y });
     if (wallIds.length) this.walls.regenerateInRect(x0 - pad, z0 - pad, x1 + pad, z1 + pad);
+    this.water.regenerateInRect(x0 - pad, z0 - pad, x1 + pad, z1 + pad);
     for (const d of this.objects.inRect(x0 - pad, z0 - pad, x1 + pad, z1 + pad)) {
       if (d.att) continue;
       const dy = this.terrain.heightAt(d.p[0], d.p[2]) - this.terrain.heightAt(d.p[0], d.p[2], old);
@@ -611,15 +738,9 @@ export class Engine {
 
   setSelection(refs: SelRef[]) {
     const prev = getEditor().selection;
-    for (const r of prev) {
-      if (r.kind === 'object') this.objects.setHighlight(r.id, 0);
-      else this.walls.setHighlight(r.id, 'none');
-    }
-    const clean = refs.filter((r) => (r.kind === 'object' ? this.objects.has(r.id) : this.walls.has(r.id)));
-    for (const r of clean) {
-      if (r.kind === 'object') this.objects.setHighlight(r.id, 1);
-      else this.walls.setHighlight(r.id, 'selected');
-    }
+    for (const r of prev) this.highlightRef(r, 'none');
+    const clean = refs.filter((r) => this.hasRef(r));
+    for (const r of clean) this.highlightRef(r, 'selected');
     setEditor({ selection: clean });
     this.refreshInspector();
     this.refreshSelectionVisuals();
@@ -631,7 +752,7 @@ export class Engine {
 
   pruneSelection() {
     const sel = getEditor().selection;
-    const clean = sel.filter((r) => (r.kind === 'object' ? this.objects.has(r.id) : this.walls.has(r.id)));
+    const clean = sel.filter((r) => this.hasRef(r));
     if (clean.length !== sel.length) this.setSelection(clean);
     else { this.refreshInspector(); this.refreshSelectionVisuals(); }
   }
@@ -640,15 +761,9 @@ export class Engine {
   setHover(ref: SelRef | null) {
     const h = this.hovered;
     if (h && ref && h.kind === ref.kind && h.id === ref.id) return;
-    if (h && !this.isSelected(h)) {
-      if (h.kind === 'object') this.objects.setHighlight(h.id, 0);
-      else this.walls.setHighlight(h.id, 'none');
-    }
+    if (h && !this.isSelected(h) && this.hasRef(h)) this.highlightRef(h, 'none');
     this.hovered = ref;
-    if (ref && !this.isSelected(ref)) {
-      if (ref.kind === 'object') this.objects.setHighlight(ref.id, 0.45);
-      else this.walls.setHighlight(ref.id, 'hover');
-    }
+    if (ref && !this.isSelected(ref)) this.highlightRef(ref, 'hover');
   }
 
   selectionCenter(): { center: Vector3; radius: number } | null {
@@ -660,9 +775,12 @@ export class Engine {
         const d = this.objects.get(r.id);
         const a = this.objects.assetOf(r.id);
         if (d && a) pts.push({ p: new Vector3(...d.p), r: a.radius * d.s[0] });
-      } else {
+      } else if (r.kind === 'wall') {
         const w = this.walls.get(r.id);
         if (w) for (const [x, z] of w.points) pts.push({ p: new Vector3(x, this.terrain.heightAt(x, z), z), r: w.thickness });
+      } else {
+        const w = this.water.get(r.id);
+        if (w) for (const [x, z] of w.points) pts.push({ p: new Vector3(x, this.terrain.heightAt(x, z), z), r: Math.max(1, w.width / 2) });
       }
     }
     if (!pts.length) return null;
@@ -678,7 +796,7 @@ export class Engine {
   refreshSelectionVisuals() {
     const s = getEditor();
     const sc = this.selectionCenter();
-    const onlyWall = s.selection.length === 1 && s.selection[0].kind === 'wall';
+    const onlyWall = s.selection.length === 1 && s.selection[0].kind !== 'object';
     this.overlay.showRing(sc && !onlyWall && s.tool === 'select' ? sc.center : null, sc?.radius ?? 1, s.transformMode);
     const rings: { p: Vector3; r: number }[] = [];
     if (s.selection.length > 1) {
@@ -705,6 +823,18 @@ export class Engine {
         kind: 'wall', id: w.id, height: w.height, thickness: w.thickness, battlement: w.battlement, stone: w.stone,
         smooth: w.smooth, closed: w.closed, flip: w.flip, length: S ? S.length : 0, points: w.points.length,
         handle: prev?.kind === 'wall' && prev.id === w.id ? prev.handle : null,
+      };
+      setEditor({ inspector: insp });
+      return;
+    }
+    if (sel.length === 1 && sel[0].kind === 'water') {
+      const w = this.water.get(sel[0].id);
+      if (!w) { setEditor({ inspector: null }); return; }
+      const insp: InspectorWater = {
+        kind: 'water', id: w.id, waterKind: w.kind, mode: w.mode, level: Math.round(this.water.levelOf(w.id) * 100) / 100,
+        levelAuto: w.level === null, depth: w.depth, width: w.width, shore: w.shore, flow: w.flow, color: w.color,
+        clarity: w.clarity, reflect: w.reflect, length: this.water.lengthOf(w.id), falls: this.water.fallsOf(w.id),
+        points: w.points.length, closed: w.closed, crossings: w.openings.length,
       };
       setEditor({ inspector: insp });
       return;
@@ -757,6 +887,10 @@ export class Engine {
       }
       cmds.push(this.cmdRemoveWall(w));
     }
+    for (const r of sel.filter((r) => r.kind === 'water')) {
+      const w = this.water.get(r.id);
+      if (w) cmds.push(this.cmdRemoveWater(w));
+    }
     this.setSelection([]);
     this.exec(new CompositeCommand(sel.length === 1 ? 'Delete' : `Delete ${sel.length}`, cmds));
   }
@@ -785,7 +919,7 @@ export class Engine {
         }
         datas.push(n);
         out.push({ kind: 'object', id: n.id });
-      } else {
+      } else if (r.kind === 'wall') {
         const w = this.walls.get(r.id);
         if (!w) continue;
         const n = cloneWall(w);
@@ -793,6 +927,14 @@ export class Engine {
         if (offset) n.points = n.points.map(([x, z]) => [x + ox * 2, z + oz * 2]);
         cmds.push(this.cmdAddWall(n, 'Duplicate wall'));
         out.push({ kind: 'wall', id: n.id });
+      } else {
+        const w = this.water.get(r.id);
+        if (!w) continue;
+        const n = cloneWater(w);
+        n.id = uid();
+        if (offset) n.points = n.points.map(([x, z]) => [x + ox * 2, z + oz * 2]);
+        cmds.push(this.cmdAddWater(n, 'Duplicate water'));
+        out.push({ kind: 'water', id: n.id });
       }
     }
     if (datas.length) cmds.unshift(this.cmdAddObjects(datas, 'Duplicate'));
@@ -1020,6 +1162,7 @@ export class Engine {
         meta: { ...this.meta },
         terrain: { res: this.terrain.res, size: this.terrain.size, hMin: -16, hMax: 112, splatRes: this.terrain.splatRes },
         walls: this.walls.all().map((w) => ({ ...w, points: w.points.map(([x, z]) => [q3(x), q3(z)] as [number, number]) })),
+        water: this.water.all().map((w) => ({ ...w, points: w.points.map(([x, z]) => [q3(x), q3(z)] as [number, number]) })),
         objects: this.objects.all().map(compactObject),
         env: { time: getEditor().time },
         camera: this.rig.state,
@@ -1050,6 +1193,7 @@ export class Engine {
     this.lighting.setPlot(this.terrain.half);
     this.rig.setBounds(this.terrain.half);
     this.walls.setHeightFn((x, z) => this.terrain.heightAt(x, z));
+    this.water.setTerrain(this.terrain);
     this.lastEmitterVersion = -1;
     this.tool.deactivate();
     this.tool.activate();
@@ -1059,6 +1203,7 @@ export class Engine {
     this.setSelection([]);
     this.objects.clear();
     this.walls.clear();
+    this.water.clear();
     this.history.clear();
   }
 
@@ -1104,6 +1249,7 @@ export class Engine {
     if (h.camera) this.rig.setState(h.camera);
     await tick();
     for (const w of h.walls) this.walls.add({ ...w, openings: w.openings ?? [] });
+    for (const w of h.water ?? []) this.water.add({ ...w, openings: w.openings ?? [] });
     const objs = h.objects;
     for (let i = 0; i < objs.length; i += 600) {
       for (const o of objs.slice(i, i + 600)) this.objects.add(o);
@@ -1198,10 +1344,12 @@ function categoryOf(assetId: string, cat: CategoryId) {
   const a = getAsset(assetId);
   if (!a) return false;
   if (cat === 'decor') return ['cannon', 'cannonballs', 'torch', 'diya', 'akash_kandil', 'flag_saffron', 'rock_small'].includes(assetId);
+  if (cat === 'water') return a.category === 'water';
   return a.category === cat;
 }
 
-const tick = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+/** Yield a frame (or a macrotask when the tab is hidden, where rAF never fires). */
+const tick = () => new Promise<void>((r) => (document.hidden ? setTimeout(r, 0) : requestAnimationFrame(() => r())));
 const q3 = (v: number) => Math.round(v * 1000) / 1000;
 const q4 = (v: number) => Math.round(v * 10000) / 10000;
 /** Millimetre positions / 1e-4 rad rotations: visually lossless, and it compresses far better. */

@@ -4,6 +4,7 @@ import { getAsset } from '../objects/catalog';
 import { cloneData, type ObjectData } from '../objects/ObjectSystem';
 import { clamp, DEG } from '../util/math';
 import { cloneWall, type WallData } from '../walls/WallSystem';
+import { cloneWater, type WaterData } from '../water/waterData';
 import { CompositeCommand, type Command } from '../history/History';
 import { Tool, type PointerInfo } from './Tool';
 
@@ -20,6 +21,7 @@ interface Drag {
   exWalls: Set<string>;
   exObjects: Set<string>;
   walls: { token: ReturnType<import('../Engine').Engine['beginWallEdit']>; start: WallData }[];
+  waters: WaterData[];
   moved: boolean;
   copies: boolean;
 }
@@ -33,6 +35,8 @@ export class SelectTool extends Tool {
   private lastHoverAt = 0;
   private hotHandle: number | null = null;
   private activeHandle: { wallId: string; index: number } | null = null;
+  private waterHandle: { id: string; index: number; before: WaterData; moved: boolean } | null = null;
+  private activeWaterHandle: { id: string; index: number } | null = null;
 
   activate() {
     this.e.refreshSelectionVisuals();
@@ -49,27 +53,43 @@ export class SelectTool extends Tool {
     return sel.length === 1 && sel[0].kind === 'wall' ? sel[0].id : null;
   }
 
+  private selectedWater(): string | null {
+    const sel = getEditor().selection;
+    return sel.length === 1 && sel[0].kind === 'water' ? sel[0].id : null;
+  }
+
+  private handlePositions(): Vector3[] {
+    const w = this.selectedWall();
+    if (w) return this.e.walls.handlePositions(w);
+    const wa = this.selectedWater();
+    return wa ? this.e.water.handlePositions(wa) : [];
+  }
+
   refreshHandles() {
-    const id = this.selectedWall();
+    const id = this.selectedWall() ?? this.selectedWater();
     if (!id || this.e.tool !== this) {
       this.e.overlay.setHandles([], null, 1);
       return;
     }
-    const pos = this.e.walls.handlePositions(id);
+    const pos = this.handlePositions();
     const scale = clamp(this.e.rig.distance / 90, 0.6, 2.2);
-    const hot = this.handleDrag ? this.handleDrag.index : this.activeHandle?.wallId === id ? this.activeHandle.index : this.hotHandle;
+    const hot = this.handleDrag ? this.handleDrag.index
+      : this.waterHandle ? this.waterHandle.index
+      : this.activeHandle?.wallId === id ? this.activeHandle.index
+      : this.activeWaterHandle?.id === id ? this.activeWaterHandle.index
+      : this.hotHandle;
     this.e.overlay.setHandles(pos, hot, scale);
   }
 
   /** Screen-space handle hit test (forgiving, ~16px). */
   private handleAt(p: PointerInfo): number | null {
-    const id = this.selectedWall();
-    if (!id) return null;
+    const pos = this.handlePositions();
+    if (!pos.length) return null;
     const cam = this.e.rig.camera;
     const el = this.e.renderer.domElement;
     const w = el.clientWidth, h = el.clientHeight;
     let best: number | null = null, bd = 18;
-    this.e.walls.handlePositions(id).forEach((v, i) => {
+    pos.forEach((v, i) => {
       const s = v.clone().project(cam);
       if (s.z > 1) return;
       const sx = (s.x * 0.5 + 0.5) * w, sy = (-s.y * 0.5 + 0.5) * h;
@@ -91,6 +111,13 @@ export class SelectTool extends Tool {
       this.e.setCursor('grabbing');
       return true;
     }
+    const waterId = this.selectedWater();
+    if (hi !== null && waterId) {
+      this.waterHandle = { id: waterId, index: hi, before: this.e.water.get(waterId)!, moved: false };
+      this.activeWaterHandle = { id: waterId, index: hi };
+      this.e.setCursor('grabbing');
+      return true;
+    }
     const hit = this.e.pick(p.ray);
     if (!hit) {
       // Alt-drag on empty space orbits; plain drag on empty space orbits too.
@@ -98,6 +125,7 @@ export class SelectTool extends Tool {
     }
     const ref: SelRef = { kind: hit.kind, id: hit.id };
     this.activeHandle = null;
+    this.activeWaterHandle = null;
     if (p.shift) {
       const sel = getEditor().selection;
       const exists = this.e.isSelected(ref);
@@ -147,6 +175,7 @@ export class SelectTool extends Tool {
       exObjects: objIds,
       // Attached objects move with the drag itself, so the wall edit must not re-seat them.
       walls: wallIds.map((id) => ({ token: this.e.beginWallEdit(id, false), start: this.e.walls.get(id)! })),
+      waters: sel.filter((r) => r.kind === 'water').map((r) => this.e.water.get(r.id)!).filter(Boolean),
       moved: false,
       copies,
     };
@@ -168,6 +197,17 @@ export class SelectTool extends Tool {
       w.points[this.handleDrag.index] = [clamp(g.x, -h, h), clamp(g.z, -h, h)];
       this.e.walls.update(w);
       this.handleDrag.moved = true;
+      this.refreshHandles();
+      return;
+    }
+    if (this.waterHandle) {
+      const g = this.e.terrain.raycast(p.ray);
+      const w = g && this.e.water.get(this.waterHandle.id);
+      if (!g || !w) return;
+      const h = this.e.terrain.half - 1;
+      w.points[this.waterHandle.index] = [clamp(g.x, -h, h), clamp(g.z, -h, h)];
+      this.e.water.update(w);
+      this.waterHandle.moved = true;
       this.refreshHandles();
       return;
     }
@@ -223,7 +263,16 @@ export class SelectTool extends Tool {
     return n;
   }
 
+  private applyWaterPoints(d: Drag, fn: (x: number, z: number) => [number, number]) {
+    for (const w of d.waters) {
+      const n = cloneWater(w);
+      n.points = n.points.map(([x, z]) => fn(x, z));
+      this.e.water.update(n);
+    }
+  }
+
   private applyMove(d: Drag, dx: number, dz: number) {
+    this.applyWaterPoints(d, (x, z) => [x + dx, z + dz]);
     for (const w of d.walls) {
       const n = cloneWall(w.start);
       n.points = n.points.map(([x, z]) => [x + dx, z + dz]);
@@ -239,6 +288,7 @@ export class SelectTool extends Tool {
       const dx = x - c.x, dz = z - c.z;
       return [c.x + dx * cs - dz * sn, c.z + dx * sn + dz * cs];
     };
+    this.applyWaterPoints(d, rot);
     for (const w of d.walls) {
       const n = cloneWall(w.start);
       n.points = n.points.map(([x, z]) => rot(x, z));
@@ -255,6 +305,7 @@ export class SelectTool extends Tool {
 
   private applyScale(d: Drag, f: number) {
     const c = d.center;
+    this.applyWaterPoints(d, (x, z) => [c.x + (x - c.x) * f, c.z + (z - c.z) * f]);
     for (const w of d.walls) {
       const n = cloneWall(w.start);
       n.points = n.points.map(([x, z]) => [c.x + (x - c.x) * f, c.z + (z - c.z) * f]);
@@ -285,6 +336,15 @@ export class SelectTool extends Tool {
       this.refreshHandles();
       return;
     }
+    if (this.waterHandle) {
+      const wh = this.waterHandle;
+      this.waterHandle = null;
+      const after = this.e.water.get(wh.id);
+      if (wh.moved && after) this.e.history.push(this.e.cmdUpdateWater(wh.before, after, 'Move water point'));
+      this.e.refreshInspector();
+      this.refreshHandles();
+      return;
+    }
     const d = this.drag;
     this.drag = null;
     if (!d) return;
@@ -307,6 +367,10 @@ export class SelectTool extends Tool {
       const c = this.e.commitWallEdit(w.token, 'Move wall', undefined, false);
       if (c) cmds.push(c);
     }
+    for (const w of d.waters) {
+      const after = this.e.water.get(w.id);
+      if (after) cmds.push(this.e.cmdUpdateWater(w, after, 'Move water'));
+    }
     const label = d.mode === 'move' ? 'Move' : d.mode === 'rotate' ? 'Rotate' : 'Scale';
     if (cmds.length) this.e.history.push(cmds.length === 1 ? Object.assign(cmds[0], { label }) : new CompositeCommand(label, cmds));
     this.e.refreshInspector();
@@ -317,6 +381,7 @@ export class SelectTool extends Tool {
     // Plain click on empty ground clears the selection.
     if (!p.shift) {
       this.activeHandle = null;
+      this.activeWaterHandle = null;
       this.e.setSelection([]);
     }
   }
@@ -346,6 +411,26 @@ export class SelectTool extends Tool {
       this.refreshHandles();
       return;
     }
+    const waterId = this.selectedWater();
+    if (waterId && hit?.kind === 'water' && hit.id === waterId) {
+      const w = this.e.water.get(waterId)!;
+      const P = w.points;
+      let bi = 0, bd = Infinity;
+      const segs = w.closed ? P.length : P.length - 1;
+      for (let i = 0; i < segs; i++) {
+        const a = P[i], b = P[(i + 1) % P.length];
+        const dx = b[0] - a[0], dz = b[1] - a[1];
+        const t = clamp(((hit.point.x - a[0]) * dx + (hit.point.z - a[1]) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+        const dd = Math.hypot(a[0] + dx * t - hit.point.x, a[1] + dz * t - hit.point.z);
+        if (dd < bd) { bd = dd; bi = i; }
+      }
+      const after = cloneWater(w);
+      after.points.splice(bi + 1, 0, [hit.point.x, hit.point.z]);
+      this.e.exec(this.e.cmdUpdateWater(w, after, 'Add water point'));
+      this.activeWaterHandle = { id: waterId, index: bi + 1 };
+      this.refreshHandles();
+      return;
+    }
     if (hit) this.e.focusSelection();
   }
 
@@ -356,16 +441,22 @@ export class SelectTool extends Tool {
       this.e.deleteWallPoint(wallId, index);
       return true;
     }
+    if ((ev.code === 'Delete' || ev.code === 'Backspace') && this.activeWaterHandle) {
+      const { id, index } = this.activeWaterHandle;
+      this.activeWaterHandle = null;
+      this.e.deleteWaterPoint(id, index);
+      return true;
+    }
     return false;
   }
 
   cancel(): boolean {
-    if (this.activeHandle) { this.activeHandle = null; this.refreshHandles(); return true; }
+    if (this.activeHandle || this.activeWaterHandle) { this.activeHandle = null; this.activeWaterHandle = null; this.refreshHandles(); return true; }
     return false;
   }
 
   update() {
-    if (this.drag || this.handleDrag) return;
+    if (this.drag || this.handleDrag || this.waterHandle) return;
     const now = performance.now();
     if (!this.hoverDirty && !this.e.rig.moving) return;
     if (now - this.lastHoverAt < 40) return;
@@ -379,6 +470,6 @@ export class SelectTool extends Tool {
     const hit = this.e.pick(p.ray);
     this.e.setHover(hit ? { kind: hit.kind, id: hit.id } : null);
     this.e.setCursor(hit ? 'pointer' : 'default');
-    if (this.e.rig.moving && this.selectedWall()) this.refreshHandles();
+    if (this.e.rig.moving && (this.selectedWall() || this.selectedWater())) this.refreshHandles();
   }
 }

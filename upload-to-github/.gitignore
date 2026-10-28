@@ -1,0 +1,7 @@
+node_modules
+dist
+*.log
+
+# Copies of the source prepared for manual GitHub upload
+upload-to-github/
+backup-before-water/

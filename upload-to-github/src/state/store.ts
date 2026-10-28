@@ -3,7 +3,8 @@ import { useStore } from 'zustand';
 
 export type CategoryId =
   | 'terrain' | 'walls' | 'fort' | 'buildings' | 'nature' | 'water' | 'people' | 'decor' | 'diwali';
-export type ToolId = 'select' | 'sculpt' | 'paint' | 'place' | 'wall';
+export type ToolId = 'select' | 'sculpt' | 'paint' | 'place' | 'wall' | 'water';
+export type WaterKind = 'pond' | 'lake' | 'tank' | 'moat' | 'river' | 'stream' | 'waterfall';
 export type SculptMode = 'raise' | 'lower' | 'smooth' | 'flatten' | 'slope' | 'roughen' | 'erode';
 export type TimePreset = 'morning' | 'afternoon' | 'golden' | 'sunset' | 'night';
 export type Quality = 'low' | 'medium' | 'high';
@@ -13,7 +14,7 @@ export type StoneStyle = 'laterite' | 'basalt' | 'weathered';
 export type CameraPreset = 'top' | 'iso' | 'ground' | 'cinematic';
 export type PlotSizeId = 'small' | 'medium' | 'large';
 
-export interface SelRef { kind: 'object' | 'wall'; id: string }
+export interface SelRef { kind: 'object' | 'wall' | 'water'; id: string }
 
 export interface InspectorObject {
   kind: 'object';
@@ -41,10 +42,30 @@ export interface InspectorWall {
   points: number;
   handle: number | null;
 }
-export type Inspector = InspectorObject | InspectorWall | null;
+export interface InspectorWater {
+  kind: 'water';
+  id: string;
+  waterKind: WaterKind;
+  mode: 'area' | 'flow';
+  level: number;
+  levelAuto: boolean;
+  depth: number;
+  width: number;
+  shore: number;
+  flow: number;
+  color: number;
+  clarity: number;
+  reflect: number;
+  length: number;
+  falls: number;
+  points: number;
+  closed: boolean;
+  crossings: number;
+}
+export type Inspector = InspectorObject | InspectorWall | InspectorWater | null;
 
 export interface Toast { id: number; text: string; tone: 'info' | 'warn' | 'ok' }
-export interface RadialState { x: number; y: number; kind: 'terrain' | 'object' | 'wall' }
+export interface RadialState { x: number; y: number; kind: 'terrain' | 'object' | 'wall' | 'water' }
 
 export interface KillaListing {
   id: string;
@@ -80,6 +101,7 @@ export interface EditorState {
     gridSize: number;
   };
   wall: { height: number; thickness: number; battlement: Battlement; stone: StoneStyle; smooth: boolean; drawing: boolean; points: number };
+  water: { kind: WaterKind; depth: number; width: number; shore: number; flow: number; color: number; clarity: number; reflect: number; carve: boolean; drawing: boolean; points: number };
   transformMode: TransformMode;
 
   selection: SelRef[];
@@ -134,6 +156,7 @@ export const editorStore = createStore<EditorState>()(() => ({
     gridSize: 2,
   },
   wall: { height: 7, thickness: 3, battlement: 'kangoore', stone: 'laterite', smooth: true, drawing: false, points: 0 },
+  water: { kind: 'pond', depth: 1.6, width: 0, shore: 3, flow: 0.2, color: 1, clarity: 0.55, reflect: 0.8, carve: true, drawing: false, points: 0 },
   transformMode: 'move',
 
   selection: [],

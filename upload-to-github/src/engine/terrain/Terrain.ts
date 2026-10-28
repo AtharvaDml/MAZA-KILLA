@@ -1,6 +1,6 @@
 import {
   BufferAttribute, BufferGeometry, DataArrayTexture, DataTexture, LinearFilter, LinearMipmapLinearFilter, Mesh,
-  Ray, RGBAFormat, Sphere, Box3, UnsignedByteType, Vector3, ClampToEdgeWrapping,
+  Ray, RGBAFormat, Sphere, Box3, UnsignedByteType, Vector3, ClampToEdgeWrapping, RedFormat, FloatType, NearestFilter,
 } from 'three';
 import type { PlotSizeId, SculptMode } from '../../state/store';
 import { brushFalloff, clamp, smoothstep } from '../util/math';
@@ -52,6 +52,8 @@ export class Terrain {
   readonly splatTex: DataTexture[];
   private splatDirty = false;
   readonly glowTex: DataTexture;
+  /** Live heights as an R32F texture (shares the heights array) so water can find its depth per pixel. */
+  readonly heightTex: DataTexture;
   private readonly glowData: Uint8Array;
 
   readonly geometry: BufferGeometry;
@@ -98,6 +100,11 @@ export class Terrain {
     this.glowTex.magFilter = LinearFilter;
     this.glowTex.minFilter = LinearFilter;
     this.glowTex.needsUpdate = true;
+    this.heightTex = new DataTexture(this.heights, this.res, this.res, RedFormat, FloatType);
+    this.heightTex.magFilter = NearestFilter;
+    this.heightTex.minFilter = NearestFilter;
+    this.heightTex.generateMipmaps = false;
+    this.heightTex.needsUpdate = true;
 
     this.geometry = this.buildGeometry();
     this.material = createTerrainMaterial(layers, { splats: this.splatTex, glow: this.glowTex, plotHalf: this.half, avg: layerAvg });
@@ -418,6 +425,7 @@ export class Terrain {
     if (this.pending) {
       this.syncRect(this.pending);
       this.pending = null;
+      this.heightTex.needsUpdate = true;
       changed = true;
     }
     if (this.splatDirty) {
@@ -456,6 +464,31 @@ export class Terrain {
   syncAll() {
     this.pending = { i0: 0, j0: 0, i1: this.res - 1, j1: this.res - 1 };
     this.flush();
+  }
+
+  /**
+   * Dig the ground down toward `target(x, z)` (never raises). Used to carve pond basins and river channels.
+   * Returns the touched rect, or null if nothing changed.
+   */
+  carve(x0: number, z0: number, x1: number, z1: number, target: (x: number, z: number) => number | null): GridRect | null {
+    const n = this.res, s = this.spacing, h = this.half, H = this.heights, E = this.edge;
+    const r: GridRect = {
+      i0: clamp(Math.floor((x0 + h) / s), 1, n - 2), j0: clamp(Math.floor((z0 + h) / s), 1, n - 2),
+      i1: clamp(Math.ceil((x1 + h) / s), 1, n - 2), j1: clamp(Math.ceil((z1 + h) / s), 1, n - 2),
+    };
+    let touched = false;
+    for (let j = r.j0; j <= r.j1; j++) {
+      for (let i = r.i0; i <= r.i1; i++) {
+        const t = target(-h + i * s, -h + j * s);
+        if (t === null) continue;
+        const k = j * n + i;
+        if (t < H[k]) { H[k] += (Math.max(t, H_MIN) - H[k]) * E[k]; touched = true; }
+      }
+    }
+    if (!touched) return null;
+    const out = { i0: r.i0 - 1, j0: r.j0 - 1, i1: r.i1 + 1, j1: r.j1 + 1 };
+    this.markDirty(out);
+    return out;
   }
 
   extractRect(src: Float32Array, r: GridRect): Float32Array {
@@ -615,6 +648,7 @@ export class Terrain {
     this.material.dispose();
     this.splatTex.forEach((t) => t.dispose());
     this.glowTex.dispose();
+    this.heightTex.dispose();
   }
 }
 

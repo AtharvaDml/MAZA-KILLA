@@ -57,16 +57,21 @@ Press **?** in the app for the full list.
   (size, rotation, lift, colour), duplicate, Alt-drag copy, delete, 200-step undo/redo for every action
   including terrain and painting. Things ride along: objects follow the ground when you sculpt, objects
   on walls re-seat when walls change, cannons stay on their buruj.
+* **Water** — ponds, lakes and water tanks drawn as organic shapes; moats, rivers, streams and waterfalls drawn as
+  paths. Beds and channels are dug into the terrain automatically, rivers run downhill, steep drops become
+  white-water falls with splash and mist, moats can have dry crossings, and every water body stays editable
+  (drag its points, change level, width, colour, clarity, reflection). At night water catches the diyas and moonlight.
+  Wells and fountains are placeable props.
 * **Lighting** — Morning, Afternoon, Golden Hour, Diwali Sunset, Night, with smooth transitions. At night,
   diyas, torches, lanterns and windows glow; "Line the wall with diyas" lights a whole rampart in one click.
 * **Saving** — autosave to this browser (IndexedDB), My Killas library with thumbnails, new / open /
   duplicate / rename / delete, export & import `.killa` files, PNG screenshots.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the engine decisions and the phase plan.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the engine decisions and [docs/OPEN-WORLD-PLAN.md](docs/OPEN-WORLD-PLAN.md) for the open-world expansion plan.
 
 ## Known gaps (planned)
 
 * Gates that cut wall openings, parametric buruj, paths & stone steps — **Phase 2**
-* Water (ponds, rivers, moats, waterfalls), ALIVE idle animations, Diwali torans/string lights — **Phase 3**
+* Animal dens & wildlife, modular Rajwada palace, accounts & cloud saves, the shared open world — see the open-world plan (Phases B–H)
 * World map, templates, gallery — **Phase 4** · share links, view mode, photo/cinematic/walk modes — **Phase 5**
 * AUTO quality from frame timing, guided onboarding, audio — **Phase 6**

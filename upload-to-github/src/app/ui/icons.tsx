@@ -60,5 +60,12 @@ export const I = {
   Brush: (p: P) => <Svg {...p}><path d="M14.5 4.5l5 5L11 18l-5-5z" /><path d="M6 13c-2 0-3 1.5-3 3.5S2.5 20 2.5 20s3.5.5 5.5-.5 2-3 2-3" /></Svg>,
   Sparkle: (p: P) => <Svg {...p}><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" /></Svg>,
   Edit: (p: P) => <Svg {...p}><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></Svg>,
+  Pond: (p: P) => <Svg {...p}><path d="M5 13c0-4 4-6.5 8-6s6.5 3 6 6.5-4 5-8 4.5S5 16.5 5 13z" /><path d="M8.5 13c1-.6 2-.6 3 0s2 .6 3 0" /></Svg>,
+  Lake: (p: P) => <Svg {...p}><path d="M2.5 14c2-4.5 6-6 10-5.5s8 2 9 5.5c-2 3.5-7 5-11 4.5s-7-1.5-8-4.5z" /><path d="M7 13.5c1.2-.7 2.4-.7 3.6 0s2.4.7 3.6 0" /></Svg>,
+  Tank: (p: P) => <Svg {...p}><path d="M3.5 7h17v12h-17z" /><path d="M6 9.5h12v7H6z" /><path d="M8.5 12h7v2.5h-7z" /></Svg>,
+  Moat: (p: P) => <Svg {...p}><ellipse cx="12" cy="15" rx="9.5" ry="5" /><path d="M8.5 15V8h1.5v1.2h1.3V8h1.4v1.2h1.3V8h1.5v7" /></Svg>,
+  River: (p: P) => <Svg {...p}><path d="M5 2.5c3 4 -3 7 0 11s-1 6 1 8" /><path d="M11 2.5c3 4 -3 7 0 11s-1 6 1 8" /><path d="M14 8l6-1.5M13.5 16l6.5 1" /></Svg>,
+  Stream: (p: P) => <Svg {...p}><path d="M8 2.5c4 3.5-3 6.5 1 10s-2 6 0 9" /><path d="M14.5 6.5c1.5.5 3 .3 4.5-.5M15 15c1.4.6 2.8.6 4.2 0" /></Svg>,
+  Waterfall: (p: P) => <Svg {...p}><path d="M3 4.5h8v15" /><path d="M11 4.5h2.5" /><path d="M12 7v10M14.5 7v9M17 8v8" /><path d="M10 20c2-1 5-1 9 0" /></Svg>,
   Keyboard: (p: P) => <Svg {...p}><rect x="2.5" y="6" width="19" height="12" rx="2" /><path d="M6 10h1M9.5 10h1M13 10h1M16.5 10h1M6 14h12" /></Svg>,
 };
